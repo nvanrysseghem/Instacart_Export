@@ -1,0 +1,9 @@
+# Python dependencies
+selenium
+selenium-stealth
+python-dotenv
+rapidfuzz
+python-Levenshtein
+
+# System dependencies (install via apt, not pip)
+# sudo apt install -y chromium-browser chromium-chromedriver python3-levenshtein nodejs rsync
