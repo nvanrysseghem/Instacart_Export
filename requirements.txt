@@ -1,9 +1,45 @@
-# Python dependencies
-selenium
-selenium-stealth
-python-dotenv
-rapidfuzz
-python-Levenshtein
+# Instacart Export - Python Dependencies
+# Optimized for Raspberry Pi 3 (ARMv7)
 
-# System dependencies (install via apt, not pip)
-# sudo apt install -y chromium-browser chromium-chromedriver python3-levenshtein nodejs rsync
+# Core dependencies
+selenium==4.15.2
+selenium-stealth==1.0.6
+python-dotenv==1.0.0
+
+# Fuzzy string matching (optimized C extensions)
+rapidfuzz==3.5.2
+python-Levenshtein==0.23.0  # Optional but speeds up rapidfuzz
+
+# Additional useful packages
+requests==2.31.0  # For potential API interactions
+beautifulsoup4==4.12.2  # For HTML parsing if needed
+lxml==4.9.3  # Fast XML/HTML parser
+
+# Development dependencies (optional)
+pytest==7.4.3  # For testing
+black==23.11.0  # Code formatter
+flake8==6.1.0  # Linter
+
+# System dependencies to install via apt (not pip):
+# sudo apt update
+# sudo apt install -y \
+#     chromium-browser \
+#     chromium-chromedriver \
+#     python3-pip \
+#     python3-dev \
+#     build-essential \
+#     libxml2-dev \
+#     libxslt1-dev \
+#     nodejs \
+#     npm \
+#     rsync \
+#     jq
+
+# Node.js dependencies (install with npm):
+# npm install --save-dev @types/node  # For better IDE support
+
+# Performance notes for Raspberry Pi:
+# - Use --no-cache-dir with pip to save SD card space
+# - Consider using pip install --user to avoid permission issues
+# - For faster installs: pip install --no-deps then handle deps manually
+# - Monitor /tmp usage during compilation of C extensions
