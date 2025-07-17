@@ -1,4 +1,4 @@
-# Instacart_Extract (Raspberry Pi 3 Optimized Version)
+# Instacart_Export (Raspberry Pi 3 Optimized Version)
 
 This project has been modified to run efficiently on a Raspberry Pi 3 running Raspbian OS.
 
