@@ -9,26 +9,117 @@ import time
 import getpass
 import platform
 import sys
+import subprocess
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium_stealth import stealth
 
-# Try to import webdriver_manager for automatic driver management
-try:
-    from webdriver_manager.chrome import ChromeDriverManager
-    from webdriver_manager.core.os_manager import ChromeType
-    HAS_WEBDRIVER_MANAGER = True
-except ImportError:
-    HAS_WEBDRIVER_MANAGER = False
-    print("Note: webdriver-manager not installed. Install with: pip3 install webdriver-manager")
-
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Function to get ChromeDriver for Raspberry Pi
+def find_chromium_binary():
+    """Find the Chromium browser binary"""
+    possible_paths = [
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/snap/bin/chromium',
+        '/usr/lib/chromium-browser/chromium-browser'
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    
+    # Try using 'which' command
+    try:
+        result = subprocess.run(['which', 'chromium-browser'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except:
+        pass
+    
+    return None
+
+def create_raspberry_pi_driver(options):
+    """Create a Chrome driver specifically for Raspberry Pi"""
+    
+    # Find Chromium binary
+    chromium_path = find_chromium_binary()
+    if not chromium_path:
+        raise Exception("Chromium browser not found. Install with: sudo apt install chromium-browser")
+    
+    print(f"Found Chromium at: {chromium_path}")
+    
+    # Set binary location
+    options.binary_location = chromium_path
+    
+    # Try different approaches
+    approaches = [
+        ("Direct driver creation", lambda: webdriver.Chrome(options=options)),
+        ("Using chromium as driver", lambda: create_with_chromium_driver(options)),
+        ("Using remote debugging", lambda: create_with_remote_debugging(options, chromium_path))
+    ]
+    
+    last_error = None
+    for approach_name, approach_func in approaches:
+        try:
+            print(f"Trying: {approach_name}")
+            driver = approach_func()
+            print(f"Success with: {approach_name}")
+            return driver
+        except Exception as e:
+            print(f"Failed: {e}")
+            last_error = e
+            continue
+    
+    # If all approaches fail, raise the last error
+    raise Exception(f"All driver creation methods failed. Last error: {last_error}")
+
+def create_with_chromium_driver(options):
+    """Try to use chromium directly as chromedriver"""
+    # Some systems have chromedriver functionality built into chromium
+    service = Service(executable_path='/usr/bin/chromium-browser')
+    return webdriver.Chrome(service=service, options=options)
+
+def create_with_remote_debugging(options, chromium_path):
+    """Create driver using remote debugging port"""
+    import tempfile
+    import atexit
+    
+    # Start Chromium with remote debugging
+    debug_port = 9222
+    user_data_dir = tempfile.mkdtemp()
+    
+    # Cleanup function
+    def cleanup():
+        try:
+            subprocess.run(['pkill', '-f', f'remote-debugging-port={debug_port}'], capture_output=True)
+        except:
+            pass
+    
+    atexit.register(cleanup)
+    
+    # Start Chromium in background
+    cmd = [
+        chromium_path,
+        f'--remote-debugging-port={debug_port}',
+        '--headless',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        f'--user-data-dir={user_data_dir}'
+    ]
+    
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(3)  # Give it time to start
+    
+    # Connect to the debugging port
+    options.add_experimental_option("debuggerAddress", f"127.0.0.1:{debug_port}")
+    return webdriver.Chrome(options=options)
+
+# Function to get Chrome driver with multiple fallback methods
 def get_chrome_driver(options):
     """Create Chrome driver with Raspberry Pi compatibility"""
     
@@ -37,58 +128,11 @@ def get_chrome_driver(options):
     
     if is_raspberry_pi:
         print("Detected Raspberry Pi (ARM architecture)")
-        
-        # Method 1: Try using webdriver-manager (recommended)
-        if HAS_WEBDRIVER_MANAGER:
-            try:
-                print("Attempting to use webdriver-manager...")
-                service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
-                return webdriver.Chrome(service=service, options=options)
-            except Exception as e:
-                print(f"webdriver-manager failed: {e}")
-        
-        # Method 2: Try using system chromium directly
-        try:
-            print("Attempting to use system Chromium as driver...")
-            
-            # For Raspberry Pi, we can try to use chromium-browser directly with Selenium
-            # This works if chromedriver is integrated into chromium
-            options.binary_location = '/usr/bin/chromium-browser'
-            
-            # Try without specifying driver path (Selenium 4.6+ can find it automatically)
-            try:
-                return webdriver.Chrome(options=options)
-            except:
-                pass
-            
-            # Try with explicit service
-            possible_drivers = [
-                '/usr/lib/chromium-browser/chromedriver',
-                '/usr/bin/chromedriver',
-                '/usr/local/bin/chromedriver',
-                '/snap/bin/chromium.chromedriver'
-            ]
-            
-            for driver_path in possible_drivers:
-                if os.path.exists(driver_path):
-                    print(f"Found driver at: {driver_path}")
-                    service = Service(driver_path)
-                    return webdriver.Chrome(service=service, options=options)
-        
-        except Exception as e:
-            print(f"System chromium approach failed: {e}")
-        
-        # Method 3: Final fallback - let Selenium try to figure it out
-        print("Attempting default Selenium driver discovery...")
-        return webdriver.Chrome(options=options)
-    
+        print("Using special Raspberry Pi driver creation method...")
+        return create_raspberry_pi_driver(options)
     else:
         # For non-Raspberry Pi systems, use standard approach
-        if HAS_WEBDRIVER_MANAGER:
-            service = Service(ChromeDriverManager().install())
-            return webdriver.Chrome(service=service, options=options)
-        else:
-            return webdriver.Chrome(options=options)
+        return webdriver.Chrome(options=options)
 
 # Configure headless options for Chrome
 def get_headless_options():
@@ -102,7 +146,14 @@ def get_headless_options():
     if 'arm' in platform.machine().lower():
         options.add_argument('--disable-software-rasterizer')
         options.add_argument('--disable-features=VizDisplayCompositor')
-    
+        # Disable features that might cause issues on Pi
+        options.add_argument('--disable-web-security')
+        options.add_argument('--disable-features=site-per-process')
+        options.add_argument('--disable-breakpad')
+        options.add_argument('--disable-gl-drawing-for-tests')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-background-networking')
+        
     return options
 
 # Function to get default screen dimensions (optimized for headless Raspberry Pi)
@@ -229,26 +280,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--file', help='Where to save the output (can be an existing file for incremental scraping)')
     parser.add_argument('--after', help='A \'Y-m-d H:M\' string to filter out orders older than a certain date/time')
+    parser.add_argument('--headless', action='store_true', help='Run in headless mode (recommended for Pi)')
     args = parser.parse_args()
     if args.file:
         output_path = args.file
     if args.after:
         after_str = args.after
 
-    # Check for required dependencies on Raspberry Pi
-    if 'arm' in platform.machine().lower() and not HAS_WEBDRIVER_MANAGER:
+    # Check system
+    if 'arm' in platform.machine().lower():
         print("\n" + "="*60)
-        print("RASPBERRY PI DETECTED - IMPORTANT SETUP REQUIRED")
+        print("RASPBERRY PI DETECTED")
         print("="*60)
-        print("\nThe chromium-chromedriver package on Raspberry Pi doesn't include")
-        print("the actual driver binary. Please install webdriver-manager:")
-        print("\n  pip3 install webdriver-manager\n")
-        print("This will automatically download and manage ChromeDriver for you.")
+        print("Using special ARM-compatible driver configuration...")
+        print("If you encounter issues, try:")
+        print("1. Run with --headless flag (recommended)")
+        print("2. Make sure Chromium is up to date: sudo apt update && sudo apt upgrade chromium-browser")
+        print("3. Consider using Docker: docker run -d -p 4444:4444 selenium/standalone-chromium")
         print("="*60 + "\n")
-        
-        response = input("Would you like to continue anyway? (y/n): ")
-        if response.lower() != 'y':
-            sys.exit(1)
 
     # Grab existing data if any and ensure you don't repeat orders
     existing_orders=[]
@@ -268,15 +317,20 @@ if __name__ == "__main__":
     screen_width, screen_height = get_screen_dimensions()
     window_width = screen_width // 2
     window_height = screen_height
-    options = Options()
-    options.add_argument(f"window-size={window_width},{window_height}")
-    options.add_argument(f"window-position={screen_width},0")
+    
+    # Get options based on headless argument
+    if args.headless:
+        options = get_headless_options()
+    else:
+        options = Options()
+        options.add_argument(f"window-size={window_width},{window_height}")
+        options.add_argument(f"window-position={screen_width},0")
     
     # User data directory
     dataDir = f"/home/{getpass.getuser()}/.config/chromium"
     if not os.path.isdir(dataDir):
         dataDir = f"/home/{getpass.getuser()}/.config/google-chrome"
-    if os.path.isdir(dataDir):
+    if os.path.isdir(dataDir) and not args.headless:
         options.add_argument(f"--user-data-dir={dataDir}")
         options.add_argument(f"--profile-directory=Default")
     
@@ -284,28 +338,21 @@ if __name__ == "__main__":
     options.add_experimental_option('useAutomationExtension', False)
     
     # Create driver using our compatibility function
+    driver = None
     try:
         driver = get_chrome_driver(options)
-    except Exception as e:
-        print(f"\nError creating Chrome driver: {e}")
-        print("\nTroubleshooting steps:")
-        print("1. Install webdriver-manager: pip3 install webdriver-manager")
-        print("2. Make sure Chromium is installed: sudo apt install chromium-browser")
-        print("3. Try running with --headless flag")
-        sys.exit(1)
-    
-    # Apply stealth settings
-    stealth(driver,
-        languages=["en-US", "en"],
-        vendor="Google Inc.",
-        platform="Win32",
-        webgl_vendor="Intel Inc.",
-        renderer="Intel Iris OpenGL Engine",
-        fix_hairline=True,
-    )
+        
+        # Apply stealth settings
+        stealth(driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
 
-    # Scrape data
-    try:
+        # Scrape data
         login(driver=driver)
         time.sleep(random.randint(5, 15))
         orders = get_orders_list(driver=driver, after_str=after_str)
@@ -314,7 +361,7 @@ if __name__ == "__main__":
             order_details = get_order_details(driver=driver, order_url=order["url"])
             order["items"] = order_details["items"]
             order["deliveryPhotoUrl"] = order_details["delivery_photo_url"]
-        driver.quit()
+        
         orders = existing_orders + orders
 
         # Output
@@ -323,7 +370,10 @@ if __name__ == "__main__":
         if output_path:
             with open(output_path, 'w') as f:
                 f.write(report)
+                
     except Exception as e:
         print(f"Error during scraping: {e}")
-        driver.quit()
         raise
+    finally:
+        if driver:
+            driver.quit()
